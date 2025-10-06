@@ -11,7 +11,20 @@ Este é um **MCP Server** que conecta o Claude ao Jira da Claro Digital, permiti
 - 💬 Adicionar comentários para rastreabilidade
 - 🔍 Executar queries JQL personalizadas
 
-Tudo através de **conversação natural** com o Claude!
+Tudo através de **conversação natural** com assistentes de IA!
+
+## 🌐 Compatibilidade Multi-Editor
+
+Este MCP server funciona em **qualquer editor** que suporte o Model Context Protocol:
+
+- ✅ **Claude Code** - Suporte nativo
+- ✅ **Cursor** - Configuração por projeto (`.cursor/mcp.json`)
+- ✅ **VS Code + GitHub Copilot** - GA desde v1.102
+- 🟡 **JetBrains IDEs** - Preview via AI Assistant
+- 🟡 **Visual Studio** - Preview
+- 🟡 **Eclipse** - Preview
+
+**MCP é um protocolo aberto** (não exclusivo do Claude!) - funciona com qualquer cliente compatível!
 
 ## ✨ Funcionalidades
 
@@ -152,8 +165,15 @@ Claude: [usa add_comment]
 
 ## 📚 Documentação Detalhada
 
-- **[SETUP.md](./SETUP.md)** - Guia completo de instalação e configuração
-- **[TOOLS.md](./TOOLS.md)** - Documentação de cada tool disponível
+### Setup por Editor
+
+- **[SETUP.md](./SETUP.md)** - Guia completo para **Claude Code**
+- **[CURSOR_SETUP.md](./CURSOR_SETUP.md)** - Guia completo para **Cursor**
+- **[VSCODE_COPILOT_SETUP.md](./VSCODE_COPILOT_SETUP.md)** - Guia completo para **VS Code + GitHub Copilot**
+
+### Referências
+
+- **[TOOLS.md](./TOOLS.md)** - Documentação de cada tool disponível (todos os editores)
 - **[SHARING.md](./SHARING.md)** - Como compartilhar com sua equipe
 
 ## 🤝 Compartilhamento com Colegas
