@@ -40,6 +40,47 @@ const allTools = {
   ...commentTools
 };
 
+// Helper function to convert Zod type to JSON Schema type
+function getJsonSchemaType(zodType: any): any {
+  const typeName = zodType._def?.typeName;
+  
+  if (!typeName) {
+    return { type: 'string' };
+  }
+  
+  switch (typeName) {
+    case 'ZodString':
+      return { type: 'string' };
+    case 'ZodNumber':
+      return { type: 'number' };
+    case 'ZodBoolean':
+      return { type: 'boolean' };
+    case 'ZodObject':
+      return { type: 'object' };
+    case 'ZodArray':
+      return { type: 'array' };
+    case 'ZodEnum':
+      // For enums, we need to extract the values
+      const values = zodType._def.values;
+      return { 
+        type: 'string',
+        enum: values ? Object.values(values) : undefined
+      };
+    case 'ZodOptional':
+      // For optional types, we need to unwrap and get the inner type
+      return getJsonSchemaType(zodType._def.innerType);
+    case 'ZodDefault':
+      // For default types, we need to unwrap and get the inner type
+      const innerSchema = getJsonSchemaType(zodType._def.innerType);
+      return {
+        ...innerSchema,
+        default: zodType._def.defaultValue()
+      };
+    default:
+      return { type: 'string' };
+  }
+}
+
 // Create MCP server
 const server = new Server(
   {
@@ -56,22 +97,39 @@ const server = new Server(
 // Register list_tools handler
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
-    tools: Object.entries(allTools).map(([name, tool]) => ({
-      name,
-      description: tool.description,
-      inputSchema: {
-        type: 'object',
-        properties: Object.fromEntries(
-          Object.entries(tool.inputSchema.shape).map(([key, value]: [string, any]) => [
-            key,
-            {
-              type: typeof value._def.typeName === 'string' ? value._def.typeName.toLowerCase().replace('zod', '') : 'string',
-              description: value.description || ''
-            }
-          ])
-        )
+    tools: Object.entries(allTools).map(([name, tool]) => {
+      // Build the properties object for the input schema
+      const properties: Record<string, any> = {};
+      const required: string[] = [];
+      
+      // Process each field in the Zod schema
+      for (const [key, value] of Object.entries(tool.inputSchema.shape)) {
+        const fieldSchema = getJsonSchemaType(value);
+        
+        // Add description if available
+        if (value.description) {
+          fieldSchema.description = value.description;
+        }
+        
+        properties[key] = fieldSchema;
+        
+        // Check if field is required (not optional)
+        const typeName = (value as any)._def?.typeName;
+        if (typeName !== 'ZodOptional' && typeName !== 'ZodDefault') {
+          required.push(key);
+        }
       }
-    }))
+      
+      return {
+        name,
+        description: tool.description,
+        inputSchema: {
+          type: 'object',
+          properties,
+          required: required.length > 0 ? required : undefined
+        }
+      };
+    })
   };
 });
 
