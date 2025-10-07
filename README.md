@@ -267,6 +267,13 @@ Cada tool segue o padrão:
 - **zod** - Schema validation
 - **dotenv** - Environment variables
 
+## 🔄 Changelog
+
+### v1.0.1 (2025-10-07)
+- ✅ **API Migration**: Atualizado para usar a nova API do Jira `/rest/api/3/search/jql` (POST)
+- A API antiga `/rest/api/3/search` (GET) foi descontinuada pela Atlassian
+- Referência: [CHANGE-2046](https://developer.atlassian.com/changelog/#CHANGE-2046)
+
 ## 🎓 Learn More
 
 - [Model Context Protocol](https://modelcontextprotocol.io/)

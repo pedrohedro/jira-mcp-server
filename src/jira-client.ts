@@ -31,14 +31,36 @@ export class JiraClient {
    * Execute JQL search
    */
   async searchIssues(jql: string, maxResults: number = 50): Promise<JiraSearchResponse> {
-    const response = await this.client.get('/rest/api/3/search/jql', {
-      params: {
+    // Tentar a nova API /rest/api/3/search/jql com POST
+    try {
+      const response = await this.client.post('/rest/api/3/search/jql', {
         jql,
-        fields: 'summary,status,priority,assignee,created,updated,project,issuetype',
+        fields: ['summary', 'status', 'priority', 'assignee', 'created', 'updated', 'project', 'issuetype'],
         maxResults
+      });
+      
+      // A nova API retorna uma estrutura diferente
+      const data = response.data;
+      return {
+        issues: data.issues || [],
+        total: data.total || data.issues?.length || 0,
+        startAt: data.startAt || 0,
+        maxResults: data.maxResults || maxResults
+      };
+    } catch (error: any) {
+      // Se a nova API falhar, tentar a API tradicional
+      if (error.response?.status === 410 || error.response?.status === 404) {
+        const response = await this.client.get('/rest/api/3/search', {
+          params: {
+            jql,
+            fields: 'summary,status,priority,assignee,created,updated,project,issuetype',
+            maxResults
+          }
+        });
+        return response.data;
       }
-    });
-    return response.data;
+      throw error;
+    }
   }
 
   /**
