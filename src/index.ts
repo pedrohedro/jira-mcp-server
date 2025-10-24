@@ -8,6 +8,9 @@ import { JiraClient } from './jira-client.js';
 import { createQueryTools } from './tools/queries.js';
 import { createWorklogTools } from './tools/worklog.js';
 import { createCommentTools } from './tools/comments.js';
+import { createIssueManagementTools } from './tools/issue-management.js';
+import { createAttachmentTools } from './tools/attachments.js';
+import { logger, metrics } from './utils/logger.js';
 
 // Load environment variables
 dotenv.config();
@@ -28,16 +31,25 @@ const jiraClient = new JiraClient({
   apiToken: process.env.JIRA_API_TOKEN!
 });
 
+logger.info('Jira MCP Server initializing...', {
+  jiraUrl: process.env.JIRA_URL,
+  email: process.env.JIRA_EMAIL
+});
+
 // Create all tools
 const queryTools = createQueryTools(jiraClient);
 const worklogTools = createWorklogTools(jiraClient);
 const commentTools = createCommentTools(jiraClient);
+const issueManagementTools = createIssueManagementTools(jiraClient);
+const attachmentTools = createAttachmentTools(jiraClient);
 
 // Combine all tools
 const allTools = {
   ...queryTools,
   ...worklogTools,
-  ...commentTools
+  ...commentTools,
+  ...issueManagementTools,
+  ...attachmentTools
 };
 
 // Helper function to convert Zod type to JSON Schema type
@@ -137,8 +149,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
+  logger.info(`Tool called: ${name}`, { tool: name, args });
+  metrics.trackToolUsage(name);
+
   const tool = allTools[name as keyof typeof allTools];
   if (!tool) {
+    logger.error(`Unknown tool: ${name}`, { tool: name });
+    metrics.trackError('unknown_tool');
+    
     return {
       content: [{
         type: 'text' as const,
@@ -155,8 +173,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     // Call tool handler
     const result = await tool.handler(validatedArgs as any);
 
+    logger.info(`Tool executed successfully: ${name}`, { tool: name });
     return result;
   } catch (error: any) {
+    logger.error(`Tool execution failed: ${name}`, { 
+      tool: name, 
+      error: error.message,
+      stack: error.stack
+    });
+    metrics.trackError(error.name || 'execution_error');
+    
     return {
       content: [{
         type: 'text' as const,

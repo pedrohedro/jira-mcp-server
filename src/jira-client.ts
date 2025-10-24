@@ -6,13 +6,19 @@ import type {
   JiraComment,
   JiraProject
 } from './types/jira.js';
+import { Cache, RateLimiter, retryWithBackoff } from './utils/cache-and-rate-limit.js';
 
 export class JiraClient {
   private client: AxiosInstance;
   private config: JiraConfig;
+  private cache: Cache;
+  private rateLimiter: RateLimiter;
 
   constructor(config: JiraConfig) {
     this.config = config;
+    this.cache = new Cache(5 * 60 * 1000); // 5 minutes TTL
+    this.rateLimiter = new RateLimiter(10, 2); // 10 tokens, refill 2/second
+    
     this.client = axios.create({
       baseURL: config.baseUrl,
       auth: {
@@ -31,36 +37,52 @@ export class JiraClient {
    * Execute JQL search
    */
   async searchIssues(jql: string, maxResults: number = 50): Promise<JiraSearchResponse> {
-    // Tentar a nova API /rest/api/3/search/jql com POST
-    try {
-      const response = await this.client.post('/rest/api/3/search/jql', {
-        jql,
-        fields: ['summary', 'status', 'priority', 'assignee', 'created', 'updated', 'project', 'issuetype'],
-        maxResults
-      });
-      
-      // A nova API retorna uma estrutura diferente
-      const data = response.data;
-      return {
-        issues: data.issues || [],
-        total: data.total || data.issues?.length || 0,
-        startAt: data.startAt || 0,
-        maxResults: data.maxResults || maxResults
-      };
-    } catch (error: any) {
-      // Se a nova API falhar, tentar a API tradicional
-      if (error.response?.status === 410 || error.response?.status === 404) {
-        const response = await this.client.get('/rest/api/3/search', {
-          params: {
-            jql,
-            fields: 'summary,status,priority,assignee,created,updated,project,issuetype',
-            maxResults
-          }
-        });
-        return response.data;
-      }
-      throw error;
+    // Check cache first
+    const cacheKey = `search:${jql}:${maxResults}`;
+    const cached = this.cache.get(cacheKey);
+    if (cached) {
+      return cached;
     }
+
+    // Apply rate limiting
+    await this.rateLimiter.consume();
+
+    // Tentar a nova API /rest/api/3/search/jql com POST
+    const result = await retryWithBackoff(async () => {
+      try {
+        const response = await this.client.post('/rest/api/3/search/jql', {
+          jql,
+          fields: ['summary', 'status', 'priority', 'assignee', 'created', 'updated', 'project', 'issuetype'],
+          maxResults
+        });
+        
+        // A nova API retorna uma estrutura diferente
+        const data = response.data;
+        return {
+          issues: data.issues || [],
+          total: data.total || data.issues?.length || 0,
+          startAt: data.startAt || 0,
+          maxResults: data.maxResults || maxResults
+        };
+      } catch (error: any) {
+        // Se a nova API falhar, tentar a API tradicional
+        if (error.response?.status === 410 || error.response?.status === 404) {
+          const response = await this.client.get('/rest/api/3/search', {
+            params: {
+              jql,
+              fields: 'summary,status,priority,assignee,created,updated,project,issuetype',
+              maxResults
+            }
+          });
+          return response.data;
+        }
+        throw error;
+      }
+    });
+
+    // Cache the result
+    this.cache.set(cacheKey, result);
+    return result;
   }
 
   /**
@@ -163,5 +185,214 @@ export class JiraClient {
   async getCurrentUser() {
     const response = await this.client.get('/rest/api/3/myself');
     return response.data;
+  }
+
+  /**
+   * Create a new issue
+   */
+  async createIssue(params: {
+    project: string;
+    summary: string;
+    description?: string;
+    issueType?: string;
+    priority?: string;
+    assignee?: string;
+    labels?: string[];
+    parentKey?: string;
+  }) {
+    const fields: any = {
+      project: {
+        key: params.project
+      },
+      summary: params.summary,
+      issuetype: {
+        name: params.issueType || 'Task'
+      }
+    };
+
+    if (params.description) {
+      fields.description = {
+        type: 'doc',
+        version: 1,
+        content: [
+          {
+            type: 'paragraph',
+            content: [
+              {
+                type: 'text',
+                text: params.description
+              }
+            ]
+          }
+        ]
+      };
+    }
+
+    if (params.priority) {
+      fields.priority = {
+        name: params.priority
+      };
+    }
+
+    if (params.assignee) {
+      fields.assignee = {
+        id: params.assignee
+      };
+    }
+
+    if (params.labels && params.labels.length > 0) {
+      fields.labels = params.labels;
+    }
+
+    if (params.parentKey) {
+      fields.parent = {
+        key: params.parentKey
+      };
+    }
+
+    const response = await this.client.post('/rest/api/3/issue', {
+      fields
+    });
+    
+    return response.data;
+  }
+
+  /**
+   * Update an existing issue
+   */
+  async updateIssue(issueKey: string, params: {
+    summary?: string;
+    description?: string;
+    priority?: string;
+    assignee?: string;
+    labels?: string[];
+  }) {
+    const fields: any = {};
+
+    if (params.summary) {
+      fields.summary = params.summary;
+    }
+
+    if (params.description) {
+      fields.description = {
+        type: 'doc',
+        version: 1,
+        content: [
+          {
+            type: 'paragraph',
+            content: [
+              {
+                type: 'text',
+                text: params.description
+              }
+            ]
+          }
+        ]
+      };
+    }
+
+    if (params.priority) {
+      fields.priority = {
+        name: params.priority
+      };
+    }
+
+    if (params.assignee) {
+      fields.assignee = {
+        id: params.assignee
+      };
+    }
+
+    if (params.labels) {
+      fields.labels = params.labels;
+    }
+
+    const response = await this.client.put(`/rest/api/3/issue/${issueKey}`, {
+      fields
+    });
+
+    return response.data;
+  }
+
+  /**
+   * Transition issue to new status
+   */
+  async transitionIssue(issueKey: string, statusName: string) {
+    // Get available transitions
+    const transitionsResponse = await this.client.get(
+      `/rest/api/3/issue/${issueKey}/transitions`
+    );
+    
+    const transitions = transitionsResponse.data.transitions || [];
+    
+    // Find transition that matches the status name
+    const transition = transitions.find(
+      (t: any) => t.to.name.toLowerCase() === statusName.toLowerCase()
+    );
+    
+    if (!transition) {
+      const availableStatuses = transitions.map((t: any) => t.to.name).join(', ');
+      throw new Error(
+        `No transition available to status "${statusName}". Available: ${availableStatuses}`
+      );
+    }
+
+    // Perform transition
+    const response = await this.client.post(
+      `/rest/api/3/issue/${issueKey}/transitions`,
+      {
+        transition: {
+          id: transition.id
+        }
+      }
+    );
+
+    return response.data;
+  }
+
+  /**
+   * Get issue URL for linking
+   */
+  getIssueUrl(issueKey: string): string {
+    return `${this.config.baseUrl}/browse/${issueKey}`;
+  }
+
+  /**
+   * Get attachments for an issue
+   */
+  async getAttachments(issueKey: string) {
+    const response = await this.client.get(`/rest/api/3/issue/${issueKey}`, {
+      params: {
+        fields: 'attachment'
+      }
+    });
+    
+    return response.data.fields?.attachment || [];
+  }
+
+  /**
+   * Add attachment to an issue
+   */
+  async addAttachment(issueKey: string, fileName: string, fileBuffer: Buffer) {
+    const FormData = (await import('form-data')).default;
+    const formData = new FormData();
+    
+    formData.append('file', fileBuffer, {
+      filename: fileName,
+      contentType: 'application/octet-stream'
+    });
+
+    const response = await this.client.post(
+      `/rest/api/3/issue/${issueKey}/attachments`,
+      formData,
+      {
+        headers: {
+          ...formData.getHeaders(),
+          'X-Atlassian-Token': 'no-check'
+        }
+      }
+    );
+
+    return response.data[0]; // Return first attachment
   }
 }
