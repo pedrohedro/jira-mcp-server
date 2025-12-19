@@ -1,0 +1,68 @@
+{
+  "fields": {
+    "description": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+        {"type": "heading", "attrs": {"level": 2}, "content": [{"type": "text", "text": "📋 Plano: Deploy GitOps com Detecção de Mudanças"}]},
+        {"type": "paragraph", "content": [{"type": "text", "text": "Implementar arquitetura GitOps completa para deploy de aplicações ECS via repositório Live, utilizando taskdefinition.json como fonte da verdade para configuração de containers."}]},
+        
+        {"type": "heading", "attrs": {"level": 3}, "content": [{"type": "text", "text": "🎯 Objetivo"}]},
+        {"type": "paragraph", "content": [{"type": "text", "text": "O deploy de aplicações deve seguir o mesmo padrão GitOps já implementado para Terraform: mudanças no Live repository disparam o deploy automaticamente, com histórico completo de PRs."}]},
+        
+        {"type": "heading", "attrs": {"level": 3}, "content": [{"type": "text", "text": "🏗️ Arquitetura Proposta"}]},
+        {"type": "bulletList", "content": [
+          {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Repositório de Aplicação (bkf-app-backend): Apenas CI - build, test, push ECR com tag semântica"}]}]},
+          {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Repositório Live (bkf-ecare-live): CD completo via taskdefinition.json na pasta apps/"}]}]},
+          {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Workflow app-detect-changes.yml: Detecta mudanças em apps/ e gera matrix de deploys"}]}]},
+          {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Workflow app-deploy.yml: Executa deploy ECS usando taskdefinition.json"}]}]}
+        ]},
+        
+        {"type": "heading", "attrs": {"level": 3}, "content": [{"type": "text", "text": "📁 Estrutura de Pastas no Live Repository"}]},
+        {"type": "codeBlock", "attrs": {"language": "text"}, "content": [{"type": "text", "text": "apps/\n  claro/\n    ecare/\n      aws/\n        645347019547/           # DEV Account\n          us-east-1/\n            develop/\n              taskdefinition.json\n            production/\n              taskdefinition.json\n        448413641929/           # PRD Account\n          us-east-1/\n            develop/\n              taskdefinition.json\n            production/\n              taskdefinition.json"}]},
+        
+        {"type": "heading", "attrs": {"level": 3}, "content": [{"type": "text", "text": "🔄 Fluxo de Deploy GitOps"}]},
+        {"type": "orderedList", "attrs": {"order": 1}, "content": [
+          {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "App repo (bkf-app-backend) faz build e push da imagem para ECR com tag (ex: v1.2.3)"}]}]},
+          {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Dev atualiza taskdefinition.json no Live repo (bkf-ecare-live) com nova tag da imagem"}]}]},
+          {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "PR é aberto para revisão (GitOps compliance - histórico rastreável)"}]}]},
+          {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Merge dispara app-detect-changes.yml que identifica apps modificados"}]}]},
+          {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "app-deploy.yml executa deploy ECS para cada app modificado em paralelo"}]}]}
+        ]},
+        
+        {"type": "heading", "attrs": {"level": 3}, "content": [{"type": "text", "text": "✅ Critérios de Aceite"}]},
+        {"type": "orderedList", "attrs": {"order": 1}, "content": [
+          {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Workflow app-detect-changes.yml funcionando no devops-templates (similar ao terraform-detect-changes.yml)"}]}]},
+          {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Template taskdefinition.json disponível no live-template (cookiecutter) com estrutura apps/"}]}]},
+          {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Workflow app-deploy.yml integrado ao live-template chamando deploy-service.yml"}]}]},
+          {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Documentação completa do fluxo GitOps para apps no devops-templates/docs"}]}]},
+          {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Projeto BKF (Ecare-Claro) funcionando com nova arquitetura como prova de conceito"}]}]}
+        ]},
+        
+        {"type": "heading", "attrs": {"level": 3}, "content": [{"type": "text", "text": "📚 Repositórios Relacionados"}]},
+        {"type": "bulletList", "content": [
+          {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Ecare-Claro/bkf-app-backend - Aplicação JavaScript (CI apenas)"}]}]},
+          {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Ecare-Claro/bkf-ecare-live - Live repository (CD via GitOps)"}]}]},
+          {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Ecare-Claro/terraform-aws-bkf - Módulo Terraform de infraestrutura"}]}]},
+          {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "TechTeam-ClaroEmpresas/devops-templates - Workflows reutilizáveis"}]}]},
+          {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "TechTeam-ClaroEmpresas/claro-repo-templates - Cookiecutter templates"}]}]}
+        ]},
+        
+        {"type": "heading", "attrs": {"level": 3}, "content": [{"type": "text", "text": "🔗 Subtarefas"}]},
+        {"type": "bulletList", "content": [
+          {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "CCOE-87773: Criar app-detect-changes.yml no devops-templates"}]}]},
+          {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "CCOE-87774: Adicionar template taskdefinition.json no live-template"}]}]},
+          {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "CCOE-87775: Criar workflow app-deploy.yml no live-template"}]}]},
+          {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "CCOE-87776: Documentar fluxo GitOps para deploy de apps ECS"}]}]},
+          {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "CCOE-87777: Implementar GitOps no projeto BKF (Ecare-Claro)"}]}]}
+        ]},
+        
+        {"type": "heading", "attrs": {"level": 3}, "content": [{"type": "text", "text": "⚙️ AWS Accounts"}]},
+        {"type": "bulletList", "content": [
+          {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "DEV-ECARE: 645347019547"}]}]},
+          {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "PRD-ECARE: 448413641929"}]}]}
+        ]}
+      ]
+    }
+  }
+}

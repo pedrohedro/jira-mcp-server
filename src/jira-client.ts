@@ -188,29 +188,51 @@ export class JiraClient {
   }
 
   /**
+   * Get project issue types
+   */
+  async getProjectIssueTypes(projectKey: string) {
+    const response = await this.client.get(`/rest/api/3/issue/createmeta/${projectKey}/issuetypes`);
+    return response.data.issueTypes || [];
+  }
+
+  /**
+   * Get issue with all fields (for discovering custom field IDs)
+   */
+  async getIssueFields(issueKey: string) {
+    const response = await this.client.get(`/rest/api/3/issue/${issueKey}`);
+    return response.data;
+  }
+
+  /**
    * Create a new issue
    */
   async createIssue(params: {
     project: string;
     summary: string;
     description?: string;
+    descriptionAdf?: any;
     issueType?: string;
+    issueTypeId?: string;
     priority?: string;
     assignee?: string;
     labels?: string[];
     parentKey?: string;
+    customFields?: Record<string, any>;
   }) {
     const fields: any = {
       project: {
         key: params.project
       },
       summary: params.summary,
-      issuetype: {
-        name: params.issueType || 'Task'
-      }
+      issuetype: params.issueTypeId 
+        ? { id: params.issueTypeId } 
+        : { name: params.issueType || 'Task' }
     };
 
-    if (params.description) {
+    // Support both plain text description and ADF (Atlassian Document Format)
+    if (params.descriptionAdf) {
+      fields.description = params.descriptionAdf;
+    } else if (params.description) {
       fields.description = {
         type: 'doc',
         version: 1,
@@ -248,6 +270,13 @@ export class JiraClient {
       fields.parent = {
         key: params.parentKey
       };
+    }
+
+    // Add custom fields (e.g., customfield_12345)
+    if (params.customFields) {
+      for (const [key, value] of Object.entries(params.customFields)) {
+        fields[key] = value;
+      }
     }
 
     const response = await this.client.post('/rest/api/3/issue', {
@@ -348,6 +377,45 @@ export class JiraClient {
     );
 
     return response.data;
+  }
+
+  /**
+   * Search issues in a specific board
+   */
+  async searchBoardIssues(boardId: number, jql?: string, maxResults: number = 50): Promise<JiraSearchResponse> {
+    const cacheKey = `board_search:${boardId}:${jql || ''}:${maxResults}`;
+    const cached = this.cache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    await this.rateLimiter.consume();
+
+    const params: any = {
+      maxResults
+    };
+
+    if (jql) {
+      params.jql = jql;
+    }
+
+    const result = await retryWithBackoff(async () => {
+      const response = await this.client.get(`${this.config.baseUrl}/rest/agile/1.0/board/${boardId}/issue`, {
+        params
+      });
+      return response;
+    });
+
+    // Transform board API response to match search API format
+    const transformedResponse = {
+      issues: result.data.issues || [],
+      total: result.data.total || 0,
+      maxResults: result.data.maxResults || maxResults,
+      startAt: result.data.startAt || 0
+    };
+
+    this.cache.set(cacheKey, transformedResponse);
+    return transformedResponse;
   }
 
   /**

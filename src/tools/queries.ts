@@ -6,6 +6,7 @@ import type { JiraClient } from '../jira-client.js';
  */
 const PREDEFINED_QUERIES = {
   my_tasks: 'assignee = currentUser() AND resolution = Unresolved ORDER BY priority DESC',
+  my_board_tasks: 'assignee = currentUser() AND project = CCOE ORDER BY priority DESC',
   my_subtasks: 'assignee = currentUser() AND issuetype = Sub-task ORDER BY priority DESC',
   sprint_active: 'assignee = currentUser() AND sprint in openSprints() ORDER BY priority DESC',
   in_development: 'assignee = currentUser() AND status = "In Development" ORDER BY updated DESC',
@@ -67,6 +68,67 @@ export function createQueryTools(jiraClient: JiraClient) {
             content: [{
               type: 'text' as const,
               text: `❌ Error: ${error.message}`
+            }],
+            isError: true
+          };
+        }
+      }
+    },
+
+    list_my_board_tasks: {
+      description: 'List all tasks assigned to current user in CCOE project board (Atlantis P&D) - Use terminal commands for board-specific searches',
+      inputSchema: z.object({
+        maxResults: z.number().optional().default(50).describe('Maximum number of results to return')
+      }),
+      handler: async (args: { maxResults?: number }) => {
+        try {
+          // First try standard API
+          const response = await jiraClient.searchIssues('assignee=currentUser() ORDER BY updated DESC', args.maxResults || 10);
+
+          if (response.issues && response.issues.length > 0) {
+            const formatted = response.issues.map(formatIssue).join('\n\n');
+            return {
+              content: [{
+                type: 'text' as const,
+                text: `📋 Found ${response.total} tasks:\n\n${formatted}`
+              }]
+            };
+          } else {
+            // No issues found - provide board-specific instructions
+            return {
+              content: [{
+                type: 'text' as const,
+                text: `📋 Suas tarefas no Jira (0 encontradas com assignee=currentUser())
+
+💡 Dica: Suas tarefas podem estar em um board específico (CCOE - Atlantis P&D).
+
+🔧 **Para consultar o board 1720 diretamente, execute no terminal:**
+
+\`\`\`bash
+curl -u "$JIRA_EMAIL:$JIRA_API_TOKEN" "https://clarodigital.atlassian.net/rest/agile/1.0/board/1720/issue?maxResults=20"
+\`\`\`
+
+🌐 **Ou acesse diretamente no navegador:**
+https://clarodigital.atlassian.net/secure/RapidBoard.jspa?rapidView=1720
+
+📝 **Script helper disponível:**
+Execute \`node scripts/get-board-tasks.mjs\` neste diretório para uma consulta automatizada.`
+              }]
+            };
+          }
+        } catch (error: any) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `❌ Erro ao buscar tarefas: ${error.message}
+
+💡 **Solução alternativa - use o terminal:**
+
+\`\`\`bash
+curl -u "$JIRA_EMAIL:$JIRA_API_TOKEN" "https://clarodigital.atlassian.net/rest/agile/1.0/board/1720/issue?maxResults=20"
+\`\`\`
+
+Ou execute: \`node scripts/get-board-tasks.mjs\``
             }],
             isError: true
           };

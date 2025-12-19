@@ -4,6 +4,8 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import dotenv from 'dotenv';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 import { JiraClient } from './jira-client.js';
 import { createQueryTools } from './tools/queries.js';
 import { createWorklogTools } from './tools/worklog.js';
@@ -12,8 +14,10 @@ import { createIssueManagementTools } from './tools/issue-management.js';
 import { createAttachmentTools } from './tools/attachments.js';
 import { logger, metrics } from './utils/logger.js';
 
-// Load environment variables
-dotenv.config();
+// Load environment variables from the project root
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+dotenv.config({ path: join(__dirname, '..', '.env') });
 
 // Validate required environment variables
 const requiredEnvVars = ['JIRA_URL', 'JIRA_EMAIL', 'JIRA_API_TOKEN'];
@@ -70,7 +74,11 @@ function getJsonSchemaType(zodType: any): any {
     case 'ZodObject':
       return { type: 'object' };
     case 'ZodArray':
-      return { type: 'array' };
+      const itemType = zodType._def.type;
+      return { 
+        type: 'array',
+        items: itemType ? getJsonSchemaType(itemType) : { type: 'string' }
+      };
     case 'ZodEnum':
       // For enums, we need to extract the values
       const values = zodType._def.values;

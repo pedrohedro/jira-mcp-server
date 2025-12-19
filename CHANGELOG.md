@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2025-12-17
+
+### Added
+- **New Tools:**
+  - `get_project_issue_types` - List available issue types for a project (with IDs)
+  - `get_issue_custom_fields` - Inspect custom fields from an existing issue
+
+- **Enhanced `create_issue`:**
+  - `issueTypeId` parameter - Use issue type ID instead of name (required for subtasks in some projects)
+  - `descriptionAdf` parameter - Support for rich Atlassian Document Format descriptions
+  - Improved custom fields documentation and error messages
+
+### Fixed
+- Subtask creation now works by using `issueTypeId` parameter
+- Custom fields with select options now properly use `{"id": "OPTION_ID"}` format
+
 ## [2.0.0] - 2025-10-24
 
 ### Added
