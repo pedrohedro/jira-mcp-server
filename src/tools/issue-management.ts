@@ -3,6 +3,51 @@ import type { JiraClient } from '../jira-client.js';
 
 /**
  * Issue Management Tools
+ * 
+ * ============================================================================
+ * CCOE PROJECT - REQUIRED FIELDS REFERENCE (discovered via createmeta API)
+ * ============================================================================
+ * 
+ * HISTÓRIA (issueTypeId: "10001"):
+ * ---------------------------------
+ * Required fields:
+ *   - project: { key: "CCOE" }
+ *   - summary: "Issue title"
+ *   - issuetype: { id: "10001" }
+ *   - customfield_11216 (3F): { id: "VALUE" }
+ *       Options:
+ *         - "16740" = Feature | Nova Implementação
+ *         - "16741" = Feature | Melhoria
+ *         - "13157" = Foundation
+ *         - "13158" = Fix
+ *         - "15745" = Outros
+ *   - customfield_12171 (Tipo): { id: "VALUE" }
+ *       Common options:
+ *         - "21718" = Padronização esteiras
+ *         - "21715" = Desenvolvimento de padrão de esteiras
+ *         - "21712" = Desenvolvimento de padrão de módulos terraform
+ *         - "21721" = Desenvolvimento de aplicações
+ *         - "21481" = Documentação
+ *         - "15745" = Outros (in customfield_11216)
+ * 
+ * SUBTAREFA (issueTypeId: "10007"):
+ * ---------------------------------
+ * Required fields:
+ *   - project: { key: "CCOE" }
+ *   - summary: "Subtask title"
+ *   - issuetype: { id: "10007" }
+ *   - parent: { key: "CCOE-XXXXX" }
+ * 
+ * Optional but recommended:
+ *   - customfield_10018 (Sprint): [{ id: SPRINT_ID }]
+ *       Example: [{ id: 12399 }] = Q1 - Sprint 35
+ *   - customfield_12124 (Team): { id: "18129" } = Atlantis United P&D
+ * 
+ * TAREFA (issueTypeId: "10006"):
+ * ---------------------------------
+ * Similar to História, check createmeta for specifics.
+ * 
+ * ============================================================================
  */
 export function createIssueManagementTools(jiraClient: JiraClient) {
   return {
@@ -82,18 +127,28 @@ export function createIssueManagementTools(jiraClient: JiraClient) {
     },
 
     create_issue: {
-      description: 'Create a new Jira issue with specified fields',
+      description: `Create a new Jira issue with specified fields. 
+For CCOE project, required fields (3F and Tipo) are auto-filled with defaults if not provided.
+Use ccoe3F and ccoeType parameters for easy selection, or customFields for full control.`,
       inputSchema: z.object({
         project: z.string().describe('Project key (e.g., CCOE)'),
         summary: z.string().describe('Issue summary/title'),
         description: z.string().optional().describe('Detailed description of the issue (plain text)'),
         descriptionAdf: z.any().optional().describe('Description in Atlassian Document Format (ADF) for rich formatting'),
         issueType: z.string().default('Task').describe('Issue type name: Task, Bug, Story, História, Subtarefa, etc.'),
-        issueTypeId: z.string().optional().describe('Issue type ID (use instead of issueType for reliability, e.g., "10007" for Subtarefa)'),
+        issueTypeId: z.string().optional().describe('Issue type ID (use instead of issueType for reliability, e.g., "10001" for História, "10007" for Subtarefa)'),
         priority: z.enum(['Highest', 'High', 'Medium', 'Low', 'Lowest']).optional().describe('Issue priority'),
         assignee: z.string().optional().describe('Assignee account ID (leave empty for unassigned)'),
         labels: z.array(z.string()).optional().describe('Array of labels to add to the issue'),
         parentKey: z.string().optional().describe('Parent issue key (required for Sub-tasks)'),
+        // CCOE-specific helper fields
+        ccoe3F: z.enum(['feature-nova', 'feature-melhoria', 'foundation', 'fix', 'outros']).optional()
+          .describe('CCOE 3F field shortcut: feature-nova, feature-melhoria, foundation, fix, outros'),
+        ccoeType: z.enum([
+          'padronizacao-esteiras', 'dev-esteiras', 'dev-terraform', 'dev-aplicacoes', 
+          'documentacao', 'sustentacao-devops', 'devops-cicd', 'outros'
+        ]).optional()
+          .describe('CCOE Tipo field shortcut: padronizacao-esteiras, dev-esteiras, dev-terraform, dev-aplicacoes, documentacao, sustentacao-devops, devops-cicd, outros'),
         customFields: z.record(z.string(), z.any()).optional().describe('Custom fields as key-value pairs. For select fields use {"id": "OPTION_ID"}, e.g., {"customfield_12171": {"id": "21743"}}')
       }),
       handler: async (args: {
@@ -107,9 +162,59 @@ export function createIssueManagementTools(jiraClient: JiraClient) {
         assignee?: string;
         labels?: string[];
         parentKey?: string;
+        ccoe3F?: string;
+        ccoeType?: string;
         customFields?: Record<string, any>;
       }) => {
         try {
+          // CCOE Required Fields Mapping
+          const CCOE_3F_MAP: Record<string, string> = {
+            'feature-nova': '16740',
+            'feature-melhoria': '16741',
+            'foundation': '13157',
+            'fix': '13158',
+            'outros': '15745'
+          };
+          
+          const CCOE_TYPE_MAP: Record<string, string> = {
+            'padronizacao-esteiras': '21718',
+            'dev-esteiras': '21715',
+            'dev-terraform': '21712',
+            'dev-aplicacoes': '21721',
+            'documentacao': '21481',
+            'sustentacao-devops': '21720',
+            'devops-cicd': '22806',
+            'outros': '15745'
+          };
+
+          // Build custom fields with CCOE defaults for História
+          let finalCustomFields = { ...args.customFields };
+          
+          if (args.project === 'CCOE') {
+            const isHistoria = args.issueTypeId === '10001' || 
+                             args.issueType?.toLowerCase() === 'história' || 
+                             args.issueType?.toLowerCase() === 'story';
+            const isSubtarefa = args.issueTypeId === '10007' || 
+                               args.issueType?.toLowerCase() === 'subtarefa' ||
+                               args.issueType?.toLowerCase() === 'sub-task' ||
+                               args.parentKey;
+
+            // For História, add required fields if not provided
+            if (isHistoria && !isSubtarefa) {
+              // 3F field (customfield_11216)
+              if (!finalCustomFields['customfield_11216']) {
+                const ccoe3FValue = args.ccoe3F ? CCOE_3F_MAP[args.ccoe3F] : '15745'; // default: outros
+                finalCustomFields['customfield_11216'] = { id: ccoe3FValue };
+              }
+              
+              // Tipo field (customfield_12171)
+              if (!finalCustomFields['customfield_12171']) {
+                const ccoeTypeValue = args.ccoeType ? CCOE_TYPE_MAP[args.ccoeType] : '21718'; // default: padronizacao-esteiras
+                finalCustomFields['customfield_12171'] = { id: ccoeTypeValue };
+              }
+            }
+          }
+
           // First validate that the project exists and user has access
           const projects = await jiraClient.getProjects();
           const projectExists = projects.some(p => p.key === args.project);
@@ -145,8 +250,13 @@ export function createIssueManagementTools(jiraClient: JiraClient) {
             assignee: args.assignee,
             labels: args.labels,
             parentKey: args.parentKey,
-            customFields: args.customFields
+            customFields: Object.keys(finalCustomFields).length > 0 ? finalCustomFields : undefined
           });
+
+          // Build custom fields info for output
+          const customFieldsInfo = Object.keys(finalCustomFields).length > 0 
+            ? `**Custom Fields**: ${Object.entries(finalCustomFields).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', ')}`
+            : '';
 
           return {
             content: [{
@@ -159,7 +269,7 @@ export function createIssueManagementTools(jiraClient: JiraClient) {
 **Project**: ${args.project}
 ${args.priority ? `**Priority**: ${args.priority}` : ''}
 ${args.parentKey ? `**Parent**: ${args.parentKey}` : ''}
-${args.customFields ? `**Custom Fields**: ${Object.keys(args.customFields).join(', ')}` : ''}
+${customFieldsInfo}
 
 🔗 View issue: ${jiraClient.getIssueUrl(issue.key)}`
             }]

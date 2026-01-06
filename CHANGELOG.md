@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-01-06
+
+### Added
+- **CCOE Project Auto-Fields:**
+  - `ccoe3F` parameter - Shortcut for CCOE 3F field (customfield_11216)
+    - Options: `feature-nova`, `feature-melhoria`, `foundation`, `fix`, `outros`
+  - `ccoeType` parameter - Shortcut for CCOE Tipo field (customfield_12171)
+    - Options: `padronizacao-esteiras`, `dev-esteiras`, `dev-terraform`, `dev-aplicacoes`, `documentacao`, `sustentacao-devops`, `devops-cicd`, `outros`
+  - Auto-fill required fields for História in CCOE project when not provided
+  - Subtarefas in CCOE only require: project, summary, issuetype, parent
+
+- **Documentation:**
+  - Added comprehensive CCOE required fields reference in source code comments
+  - Documented all custom field IDs and their allowed values
+
+### Fixed
+- Issue creation in CCOE project now works without manually specifying custom fields
+- Improved error messages with field details
+
 ## [2.1.0] - 2025-12-17
 
 ### Added
