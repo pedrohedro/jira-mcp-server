@@ -12,6 +12,8 @@ import { createWorklogTools } from './tools/worklog.js';
 import { createCommentTools } from './tools/comments.js';
 import { createIssueManagementTools } from './tools/issue-management.js';
 import { createAttachmentTools } from './tools/attachments.js';
+import { ConfluenceClient } from './confluence-client.js';
+import { createConfluenceManagementTools } from './tools/confluence-management.js';
 import { logger, metrics } from './utils/logger.js';
 
 // Load environment variables from the project root
@@ -35,6 +37,13 @@ const jiraClient = new JiraClient({
   apiToken: process.env.JIRA_API_TOKEN!
 });
 
+// Initialize Confluence client (shares the same Atlassian Cloud credentials and base URL)
+const confluenceClient = new ConfluenceClient({
+  baseUrl: process.env.JIRA_URL!,
+  email: process.env.JIRA_EMAIL!,
+  apiToken: process.env.JIRA_API_TOKEN!
+});
+
 logger.info('Jira MCP Server initializing...', {
   jiraUrl: process.env.JIRA_URL,
   email: process.env.JIRA_EMAIL
@@ -46,6 +55,7 @@ const worklogTools = createWorklogTools(jiraClient);
 const commentTools = createCommentTools(jiraClient);
 const issueManagementTools = createIssueManagementTools(jiraClient);
 const attachmentTools = createAttachmentTools(jiraClient);
+const confluenceTools = createConfluenceManagementTools(confluenceClient);
 
 // Combine all tools
 const allTools = {
@@ -53,17 +63,18 @@ const allTools = {
   ...worklogTools,
   ...commentTools,
   ...issueManagementTools,
-  ...attachmentTools
+  ...attachmentTools,
+  ...confluenceTools
 };
 
 // Helper function to convert Zod type to JSON Schema type
 function getJsonSchemaType(zodType: any): any {
   const typeName = zodType._def?.typeName;
-  
+
   if (!typeName) {
     return { type: 'string' };
   }
-  
+
   switch (typeName) {
     case 'ZodString':
       return { type: 'string' };
@@ -73,16 +84,26 @@ function getJsonSchemaType(zodType: any): any {
       return { type: 'boolean' };
     case 'ZodObject':
       return { type: 'object' };
+    case 'ZodRecord':
+      // Record<string, any> should be an object with additionalProperties
+      const valueType = zodType._def.valueType;
+      return {
+        type: 'object',
+        additionalProperties: valueType ? getJsonSchemaType(valueType) : true
+      };
+    case 'ZodAny':
+      // Any type - allow any value
+      return {};
     case 'ZodArray':
       const itemType = zodType._def.type;
-      return { 
+      return {
         type: 'array',
         items: itemType ? getJsonSchemaType(itemType) : { type: 'string' }
       };
     case 'ZodEnum':
       // For enums, we need to extract the values
       const values = zodType._def.values;
-      return { 
+      return {
         type: 'string',
         enum: values ? Object.values(values) : undefined
       };
@@ -121,25 +142,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       // Build the properties object for the input schema
       const properties: Record<string, any> = {};
       const required: string[] = [];
-      
+
       // Process each field in the Zod schema
       for (const [key, value] of Object.entries(tool.inputSchema.shape)) {
         const fieldSchema = getJsonSchemaType(value);
-        
+
         // Add description if available
         if (value.description) {
           fieldSchema.description = value.description;
         }
-        
+
         properties[key] = fieldSchema;
-        
+
         // Check if field is required (not optional)
         const typeName = (value as any)._def?.typeName;
         if (typeName !== 'ZodOptional' && typeName !== 'ZodDefault') {
           required.push(key);
         }
       }
-      
+
       return {
         name,
         description: tool.description,
@@ -164,7 +185,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   if (!tool) {
     logger.error(`Unknown tool: ${name}`, { tool: name });
     metrics.trackError('unknown_tool');
-    
+
     return {
       content: [{
         type: 'text' as const,
@@ -184,13 +205,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     logger.info(`Tool executed successfully: ${name}`, { tool: name });
     return result;
   } catch (error: any) {
-    logger.error(`Tool execution failed: ${name}`, { 
-      tool: name, 
+    logger.error(`Tool execution failed: ${name}`, {
+      tool: name,
       error: error.message,
       stack: error.stack
     });
     metrics.trackError(error.name || 'execution_error');
-    
+
     return {
       content: [{
         type: 'text' as const,

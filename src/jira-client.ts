@@ -18,7 +18,7 @@ export class JiraClient {
     this.config = config;
     this.cache = new Cache(5 * 60 * 1000); // 5 minutes TTL
     this.rateLimiter = new RateLimiter(10, 2); // 10 tokens, refill 2/second
-    
+
     this.client = axios.create({
       baseURL: config.baseUrl,
       auth: {
@@ -55,7 +55,7 @@ export class JiraClient {
           fields: ['summary', 'status', 'priority', 'assignee', 'created', 'updated', 'project', 'issuetype'],
           maxResults
         });
-        
+
         // A nova API retorna uma estrutura diferente
         const data = response.data;
         return {
@@ -224,8 +224,8 @@ export class JiraClient {
         key: params.project
       },
       summary: params.summary,
-      issuetype: params.issueTypeId 
-        ? { id: params.issueTypeId } 
+      issuetype: params.issueTypeId
+        ? { id: params.issueTypeId }
         : { name: params.issueType || 'Task' }
     };
 
@@ -282,7 +282,7 @@ export class JiraClient {
     const response = await this.client.post('/rest/api/3/issue', {
       fields
     });
-    
+
     return response.data;
   }
 
@@ -295,6 +295,7 @@ export class JiraClient {
     priority?: string;
     assignee?: string;
     labels?: string[];
+    customFields?: Record<string, any>;
   }) {
     const fields: any = {};
 
@@ -336,6 +337,13 @@ export class JiraClient {
       fields.labels = params.labels;
     }
 
+    // Add custom fields (e.g., customfield_12345)
+    if (params.customFields) {
+      for (const [key, value] of Object.entries(params.customFields)) {
+        fields[key] = value;
+      }
+    }
+
     const response = await this.client.put(`/rest/api/3/issue/${issueKey}`, {
       fields
     });
@@ -351,14 +359,14 @@ export class JiraClient {
     const transitionsResponse = await this.client.get(
       `/rest/api/3/issue/${issueKey}/transitions`
     );
-    
+
     const transitions = transitionsResponse.data.transitions || [];
-    
+
     // Find transition that matches the status name
     const transition = transitions.find(
       (t: any) => t.to.name.toLowerCase() === statusName.toLowerCase()
     );
-    
+
     if (!transition) {
       const availableStatuses = transitions.map((t: any) => t.to.name).join(', ');
       throw new Error(
@@ -434,7 +442,7 @@ export class JiraClient {
         fields: 'attachment'
       }
     });
-    
+
     return response.data.fields?.attachment || [];
   }
 
@@ -444,7 +452,7 @@ export class JiraClient {
   async addAttachment(issueKey: string, fileName: string, fileBuffer: Buffer) {
     const FormData = (await import('form-data')).default;
     const formData = new FormData();
-    
+
     formData.append('file', fileBuffer, {
       filename: fileName,
       contentType: 'application/octet-stream'

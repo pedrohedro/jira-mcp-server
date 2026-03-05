@@ -59,8 +59,8 @@ export function createIssueManagementTools(jiraClient: JiraClient) {
       handler: async (args: { project: string }) => {
         try {
           const issueTypes = await jiraClient.getProjectIssueTypes(args.project);
-          
-          const typesList = issueTypes.map((t: any) => 
+
+          const typesList = issueTypes.map((t: any) =>
             `- **${t.name}** (ID: ${t.id}) ${t.subtask ? '[Subtask]' : ''}`
           ).join('\n');
 
@@ -90,7 +90,7 @@ export function createIssueManagementTools(jiraClient: JiraClient) {
       handler: async (args: { issueKey: string }) => {
         try {
           const issue = await jiraClient.getIssueFields(args.issueKey);
-          
+
           const customFields = Object.entries(issue.fields)
             .filter(([key, value]) => key.startsWith('customfield_') && value !== null)
             .map(([key, value]) => {
@@ -145,7 +145,7 @@ Use ccoe3F and ccoeType parameters for easy selection, or customFields for full 
         ccoe3F: z.enum(['feature-nova', 'feature-melhoria', 'foundation', 'fix', 'outros']).optional()
           .describe('CCOE 3F field shortcut: feature-nova, feature-melhoria, foundation, fix, outros'),
         ccoeType: z.enum([
-          'padronizacao-esteiras', 'dev-esteiras', 'dev-terraform', 'dev-aplicacoes', 
+          'padronizacao-esteiras', 'dev-esteiras', 'dev-terraform', 'dev-aplicacoes',
           'documentacao', 'sustentacao-devops', 'devops-cicd', 'outros'
         ]).optional()
           .describe('CCOE Tipo field shortcut: padronizacao-esteiras, dev-esteiras, dev-terraform, dev-aplicacoes, documentacao, sustentacao-devops, devops-cicd, outros'),
@@ -175,7 +175,7 @@ Use ccoe3F and ccoeType parameters for easy selection, or customFields for full 
             'fix': '13158',
             'outros': '15745'
           };
-          
+
           const CCOE_TYPE_MAP: Record<string, string> = {
             'padronizacao-esteiras': '21718',
             'dev-esteiras': '21715',
@@ -189,15 +189,15 @@ Use ccoe3F and ccoeType parameters for easy selection, or customFields for full 
 
           // Build custom fields with CCOE defaults for História
           let finalCustomFields = { ...args.customFields };
-          
+
           if (args.project === 'CCOE') {
-            const isHistoria = args.issueTypeId === '10001' || 
-                             args.issueType?.toLowerCase() === 'história' || 
-                             args.issueType?.toLowerCase() === 'story';
-            const isSubtarefa = args.issueTypeId === '10007' || 
-                               args.issueType?.toLowerCase() === 'subtarefa' ||
-                               args.issueType?.toLowerCase() === 'sub-task' ||
-                               args.parentKey;
+            const isHistoria = args.issueTypeId === '10001' ||
+              args.issueType?.toLowerCase() === 'história' ||
+              args.issueType?.toLowerCase() === 'story';
+            const isSubtarefa = args.issueTypeId === '10007' ||
+              args.issueType?.toLowerCase() === 'subtarefa' ||
+              args.issueType?.toLowerCase() === 'sub-task' ||
+              args.parentKey;
 
             // For História, add required fields if not provided
             if (isHistoria && !isSubtarefa) {
@@ -206,7 +206,7 @@ Use ccoe3F and ccoeType parameters for easy selection, or customFields for full 
                 const ccoe3FValue = args.ccoe3F ? CCOE_3F_MAP[args.ccoe3F] : '15745'; // default: outros
                 finalCustomFields['customfield_11216'] = { id: ccoe3FValue };
               }
-              
+
               // Tipo field (customfield_12171)
               if (!finalCustomFields['customfield_12171']) {
                 const ccoeTypeValue = args.ccoeType ? CCOE_TYPE_MAP[args.ccoeType] : '21718'; // default: padronizacao-esteiras
@@ -254,7 +254,7 @@ Use ccoe3F and ccoeType parameters for easy selection, or customFields for full 
           });
 
           // Build custom fields info for output
-          const customFieldsInfo = Object.keys(finalCustomFields).length > 0 
+          const customFieldsInfo = Object.keys(finalCustomFields).length > 0
             ? `**Custom Fields**: ${Object.entries(finalCustomFields).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', ')}`
             : '';
 
@@ -381,7 +381,8 @@ ${customFieldsInfo}
         description: z.string().optional().describe('New description'),
         priority: z.enum(['Highest', 'High', 'Medium', 'Low', 'Lowest']).optional().describe('New priority'),
         assignee: z.string().optional().describe('New assignee account ID or email'),
-        labels: z.array(z.string()).optional().describe('Array of labels (replaces existing)')
+        labels: z.array(z.string()).optional().describe('Array of labels (replaces existing)'),
+        customFields: z.record(z.string(), z.any()).optional().describe('Custom fields as key-value pairs. For select fields use {"id": "OPTION_ID"}, e.g., {"customfield_12171": {"id": "21743"}}')
       }),
       handler: async (args: {
         issueKey: string;
@@ -390,6 +391,7 @@ ${customFieldsInfo}
         priority?: string;
         assignee?: string;
         labels?: string[];
+        customFields?: Record<string, any>;
       }) => {
         try {
           await jiraClient.updateIssue(args.issueKey, {
@@ -397,7 +399,8 @@ ${customFieldsInfo}
             description: args.description,
             priority: args.priority,
             assignee: args.assignee,
-            labels: args.labels
+            labels: args.labels,
+            customFields: args.customFields
           });
 
           const updatedFields = Object.keys(args).filter(k => k !== 'issueKey' && args[k as keyof typeof args] !== undefined);
