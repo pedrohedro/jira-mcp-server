@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 
+import { randomUUID } from 'node:crypto';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js';
+import { CallToolRequestSchema, ListToolsRequestSchema, isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -122,111 +125,199 @@ function getJsonSchemaType(zodType: any): any {
   }
 }
 
-// Create MCP server
-const server = new Server(
-  {
-    name: 'jira-mcp-server',
-    version: '1.0.0'
-  },
-  {
-    capabilities: {
-      tools: {}
-    }
-  }
-);
+// Create MCP server (used for stdio mode)
+const server = createServer();
 
-// Register list_tools handler
-server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return {
-    tools: Object.entries(allTools).map(([name, tool]) => {
-      // Build the properties object for the input schema
-      const properties: Record<string, any> = {};
-      const required: string[] = [];
+// Determine transport mode from env or CLI args
+const transportMode = process.argv.includes('--http')
+  ? 'http'
+  : (process.env.MCP_TRANSPORT || 'stdio');
 
-      // Process each field in the Zod schema
-      for (const [key, value] of Object.entries(tool.inputSchema.shape)) {
-        const fieldSchema = getJsonSchemaType(value);
-
-        // Add description if available
-        if (value.description) {
-          fieldSchema.description = value.description;
-        }
-
-        properties[key] = fieldSchema;
-
-        // Check if field is required (not optional)
-        const typeName = (value as any)._def?.typeName;
-        if (typeName !== 'ZodOptional' && typeName !== 'ZodDefault') {
-          required.push(key);
-        }
-      }
-
-      return {
-        name,
-        description: tool.description,
-        inputSchema: {
-          type: 'object',
-          properties,
-          required: required.length > 0 ? required : undefined
-        }
-      };
-    })
-  };
-});
-
-// Register call_tool handler
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
-
-  logger.info(`Tool called: ${name}`, { tool: name, args });
-  metrics.trackToolUsage(name);
-
-  const tool = allTools[name as keyof typeof allTools];
-  if (!tool) {
-    logger.error(`Unknown tool: ${name}`, { tool: name });
-    metrics.trackError('unknown_tool');
-
-    return {
-      content: [{
-        type: 'text' as const,
-        text: `Unknown tool: ${name}`
-      }],
-      isError: true
-    };
-  }
-
-  try {
-    // Validate args with Zod
-    const validatedArgs = tool.inputSchema.parse(args);
-
-    // Call tool handler
-    const result = await tool.handler(validatedArgs as any);
-
-    logger.info(`Tool executed successfully: ${name}`, { tool: name });
-    return result;
-  } catch (error: any) {
-    logger.error(`Tool execution failed: ${name}`, {
-      tool: name,
-      error: error.message,
-      stack: error.stack
-    });
-    metrics.trackError(error.name || 'execution_error');
-
-    return {
-      content: [{
-        type: 'text' as const,
-        text: `Error: ${error.message}`
-      }],
-      isError: true
-    };
-  }
-});
-
-// Start server
-async function main() {
+// Start server in stdio mode (backward compatible)
+async function startStdio() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error('Jira MCP Server running on stdio');
+}
+
+// Start server in streamable-http mode (remote)
+async function startHttp() {
+  const port = parseInt(process.env.MCP_PORT || '3000', 10);
+  const host = process.env.MCP_HOST || '127.0.0.1';
+
+  const app = createMcpExpressApp({ host });
+
+  // Session management
+  const transports: Record<string, StreamableHTTPServerTransport> = {};
+
+  // Health check endpoint
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  app.get('/health', (_req: any, res: any) => {
+    res.json({ status: 'ok', service: 'jira-mcp-server', transport: 'streamable-http' });
+  });
+
+  // MCP POST endpoint - handles initialization and tool calls
+  app.post('/mcp', async (req: any, res: any) => {
+    const sessionId = req.headers['mcp-session-id'] as string | undefined;
+
+    try {
+      let transport: StreamableHTTPServerTransport;
+
+      if (sessionId && transports[sessionId]) {
+        transport = transports[sessionId];
+      } else if (!sessionId && isInitializeRequest(req.body)) {
+        transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+          onsessioninitialized: (sid) => {
+            logger.info(`MCP session initialized: ${sid}`);
+            transports[sid] = transport;
+          }
+        });
+
+        transport.onclose = () => {
+          const sid = transport.sessionId;
+          if (sid && transports[sid]) {
+            logger.info(`Transport closed for session ${sid}`);
+            delete transports[sid];
+          }
+        };
+
+        // Each session gets its own server instance
+        const sessionServer = createServer();
+        await sessionServer.connect(transport);
+        await transport.handleRequest(req, res, req.body);
+        return;
+      } else {
+        res.status(400).json({
+          jsonrpc: '2.0',
+          error: { code: -32000, message: 'Bad Request: No valid session ID provided' },
+          id: null
+        });
+        return;
+      }
+
+      await transport.handleRequest(req, res, req.body);
+    } catch (error) {
+      logger.error('Error handling MCP request:', { error });
+      if (!res.headersSent) {
+        res.status(500).json({
+          jsonrpc: '2.0',
+          error: { code: -32603, message: 'Internal server error' },
+          id: null
+        });
+      }
+    }
+  });
+
+  // MCP GET endpoint - SSE streams
+  app.get('/mcp', async (req: any, res: any) => {
+    const sessionId = req.headers['mcp-session-id'] as string | undefined;
+    if (!sessionId || !transports[sessionId]) {
+      res.status(400).send('Invalid or missing session ID');
+      return;
+    }
+    await transports[sessionId].handleRequest(req, res);
+  });
+
+  // MCP DELETE endpoint - session termination
+  app.delete('/mcp', async (req: any, res: any) => {
+    const sessionId = req.headers['mcp-session-id'] as string | undefined;
+    if (!sessionId || !transports[sessionId]) {
+      res.status(400).send('Invalid or missing session ID');
+      return;
+    }
+    try {
+      await transports[sessionId].handleRequest(req, res);
+    } catch (error) {
+      logger.error('Error handling session termination:', { error });
+      if (!res.headersSent) {
+        res.status(500).send('Error processing session termination');
+      }
+    }
+  });
+
+  app.listen(port, () => {
+    logger.info(`Jira MCP Server (streamable-http) listening on ${host}:${port}`);
+    console.error(`Jira MCP Server running on http://${host}:${port}/mcp`);
+  });
+
+  // Graceful shutdown
+  process.on('SIGINT', async () => {
+    logger.info('Shutting down server...');
+    for (const sid in transports) {
+      try {
+        await transports[sid].close();
+        delete transports[sid];
+      } catch (error) {
+        logger.error(`Error closing transport for session ${sid}:`, { error });
+      }
+    }
+    process.exit(0);
+  });
+}
+
+// Factory function to create a configured MCP server instance (for http mode, one per session)
+function createServer(): Server {
+  const s = new Server(
+    { name: 'jira-mcp-server', version: '2.3.0' },
+    { capabilities: { tools: {} } }
+  );
+
+  s.setRequestHandler(ListToolsRequestSchema, async () => {
+    return {
+      tools: Object.entries(allTools).map(([name, tool]) => {
+        const properties: Record<string, any> = {};
+        const required: string[] = [];
+        for (const [key, value] of Object.entries(tool.inputSchema.shape)) {
+          const fieldSchema = getJsonSchemaType(value);
+          if (value.description) fieldSchema.description = value.description;
+          properties[key] = fieldSchema;
+          const typeName = (value as any)._def?.typeName;
+          if (typeName !== 'ZodOptional' && typeName !== 'ZodDefault') required.push(key);
+        }
+        return {
+          name,
+          description: tool.description,
+          inputSchema: { type: 'object', properties, required: required.length > 0 ? required : undefined }
+        };
+      })
+    };
+  });
+
+  s.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const { name, arguments: args } = request.params;
+    logger.info(`Tool called: ${name}`, { tool: name, args });
+    metrics.trackToolUsage(name);
+
+    const tool = allTools[name as keyof typeof allTools];
+    if (!tool) {
+      logger.error(`Unknown tool: ${name}`, { tool: name });
+      metrics.trackError('unknown_tool');
+      return { content: [{ type: 'text' as const, text: `Unknown tool: ${name}` }], isError: true };
+    }
+
+    try {
+      const validatedArgs = tool.inputSchema.parse(args);
+      const result = await tool.handler(validatedArgs as any);
+      logger.info(`Tool executed successfully: ${name}`, { tool: name });
+      return result;
+    } catch (error: any) {
+      logger.error(`Tool execution failed: ${name}`, { tool: name, error: error.message, stack: error.stack });
+      metrics.trackError(error.name || 'execution_error');
+      return { content: [{ type: 'text' as const, text: `Error: ${error.message}` }], isError: true };
+    }
+  });
+
+  return s;
+}
+
+// Main entrypoint
+async function main() {
+  if (transportMode === 'http') {
+    await startHttp();
+  } else {
+    await startStdio();
+  }
 }
 
 main().catch((error) => {
